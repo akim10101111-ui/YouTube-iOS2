@@ -1,0 +1,51 @@
+name: YouFlow APK Build (fixed SDK setup)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack Android source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ZIP=YouFlow-iOS-Android-Project.zip
+          test -f "$ZIP"
+          mkdir -p /tmp/project
+          unzip -q "$ZIP" -d /tmp/project
+          ROOT="$(find /tmp/project -type f -name gradlew -printf '%h\n' | head -n1)"
+          test -n "$ROOT"
+          cp -a "$ROOT"/. .
+          chmod +x gradlew
+          test -d app
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f | head -n1)"
+          echo "Using sdkmanager at: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Set up NewPipeExtractor
+        run: |
+          git clone https://github.com/TeamNewPipe/NewPipeExtractor.git /tmp/NewPipeExtractor
+          git -C /tmp/NewPipeExtractor checkout 13a655fe53e0c3065f88725fc1fb594c3ede0169
+          ln -s /tmp/NewPipeExtractor NewPipeExtractor
+      - name: Assemble Debug APK
+        run: ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YouFlow-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

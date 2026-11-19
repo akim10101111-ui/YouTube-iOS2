@@ -1,0 +1,88 @@
+name: Import YouFlow ZIP and build Debug APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract uploaded project archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="YouFlow-iOS-Android-Project.zip"
+          if [ ! -f "$ZIP" ]; then
+            echo "::error::Expected $ZIP at repository root, but it was not found."
+            echo "Repository files:"
+            ls -la
+            exit 1
+          fi
+          mkdir -p /tmp/youflow-import
+          unzip -q "$ZIP" -d /tmp/youflow-import
+          if [ -d /tmp/youflow-import/YouFlow-iOS ]; then
+            cp -a /tmp/youflow-import/YouFlow-iOS/. .
+          else
+            ROOT="$(find /tmp/youflow-import -name gradlew -type f -printf '%h\n' | head -n1)"
+            if [ -z "$ROOT" ]; then
+              echo "::error::Could not find gradlew in uploaded ZIP."
+              find /tmp/youflow-import -maxdepth 3 -type f | head -100
+              exit 1
+            fi
+            cp -a "$ROOT"/. .
+          fi
+          rm -f "$ZIP"
+          rm -rf /tmp/youflow-import
+          test -f ./gradlew
+          chmod +x ./gradlew
+          test -d ./app
+
+      - name: Commit unpacked source into repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Import YouFlow Android source from ZIP"
+            git push
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Clone pinned NewPipeExtractor dependency
+        run: |
+          git clone https://github.com/TeamNewPipe/NewPipeExtractor.git /tmp/NewPipeExtractor
+          git -C /tmp/NewPipeExtractor checkout 13a655fe53e0c3065f88725fc1fb594c3ede0169
+          if [ -d NewPipeExtractor ]; then
+            rm -rf NewPipeExtractor
+          fi
+          ln -s /tmp/NewPipeExtractor NewPipeExtractor
+
+      - name: Build Debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: YouFlow-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
